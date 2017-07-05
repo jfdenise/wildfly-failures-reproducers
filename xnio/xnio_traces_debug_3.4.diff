@@ -1,0 +1,190 @@
+diff --git a/api/src/main/java/org/xnio/channels/TranslatingSuspendableChannel.java b/api/src/main/java/org/xnio/channels/TranslatingSuspendableChannel.java
+index 8928397..e8c2550 100644
+--- a/api/src/main/java/org/xnio/channels/TranslatingSuspendableChannel.java
++++ b/api/src/main/java/org/xnio/channels/TranslatingSuspendableChannel.java
+@@ -34,6 +34,7 @@ import java.nio.channels.Channel;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
++import org.jboss.logging.Logger;
+ 
+ import org.xnio.ChannelListener;
+ import org.xnio.ChannelListeners;
+@@ -155,6 +156,7 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+     /**
+      * Called when the underlying channel is readable.
+      */
++    private static final Logger log = Logger.getLogger("org.xnio.channels.framed");
+     protected void handleReadable() {
+         int oldState;
+         oldState = clearFlags(WRITE_REQUIRES_READ);
+@@ -165,10 +167,12 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+             }
+         }
+         if (allAreClear(oldState, READ_READY) && anyAreSet(oldState, READ_REQUIRES_WRITE | READ_REQUIRES_EXT)) {
++            log.trace("suspendReads1");
+             channel.suspendReads();
+             oldState = state;
+             if (anyAreSet(oldState, READ_READY) || allAreClear(oldState, READ_REQUIRES_WRITE | READ_REQUIRES_EXT)) {
+                 // undo
++                log.trace("resumeReads1");
+                 channel.resumeReads();
+             } else {
+                 return;
+@@ -176,14 +180,17 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+         }
+         do {
+             if (anyAreSet(oldState, READ_SHUT_DOWN)) {
++                log.trace("suspendReads2");
+                 channel.suspendReads();
+                 return;
+             }
+             if (allAreClear(oldState, READ_REQUESTED)) {
++                log.trace("suspendReads3");
+                 channel.suspendReads();
+                 oldState = state;
+                 if (allAreSet(oldState, READ_REQUESTED)) {
+                     // undo
++                    log.trace("resumeReads2");
+                     channel.resumeReads();
+                 } else {
+                     return;
+@@ -203,7 +210,7 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+                 // race is OK
+                 channel.wakeupWrites();
+             }
+-        } while (allAreSet(oldState, READ_READY));
++            } while (allAreSet(oldState, READ_READY));
+     }
+ 
+     /**
+@@ -257,7 +264,7 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+                 // race is OK
+                 channel.wakeupReads();
+             }
+-        } while (allAreSet(oldState, WRITE_READY));
++            } while (allAreSet(oldState, WRITE_READY));
+     }
+ 
+     /**
+@@ -536,12 +543,15 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+ 
+     /** {@inheritDoc} */
+     public void resumeReads() {
++        log.trace("@@@resumeReads");
+         final int oldState = setFlags(READ_REQUESTED);
+         if (anyAreSet(oldState, READ_REQUESTED | READ_SHUT_DOWN)) {
++            log.trace("@@@resumeReads idempotent");
+             // idempotent or shut down, either way
+             return;
+         }
+         if (allAreSet(oldState, READ_READY)) {
++            log.trace("@@@resumeReads READ_READY");
+             // reads are known to be ready so trigger listener right away
+             channel.wakeupReads();
+             return;
+@@ -550,9 +560,10 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+             if (allAreSet(oldState, READ_REQUIRES_WRITE)) {
+                 channel.resumeWrites();
+             } else {
++                log.tracef("@@@resumeReads resumeReads %s", channel);
+                 channel.resumeReads();
+             }
+-        }
++            }
+     }
+ 
+     public boolean isReadResumed() {
+@@ -592,7 +603,7 @@ public abstract class TranslatingSuspendableChannel<C extends SuspendableChannel
+             } else {
+                 channel.resumeWrites();
+             }
+-        }
++            }
+     }
+ 
+     public boolean isWriteResumed() {
+diff --git a/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java b/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
+index 2a695a0..aaab0f9 100644
+--- a/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
++++ b/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
+@@ -69,6 +69,7 @@ import static java.lang.System.identityHashCode;
+ import static java.lang.System.nanoTime;
+ import static java.util.concurrent.locks.LockSupport.park;
+ import static java.util.concurrent.locks.LockSupport.unpark;
++import java.util.logging.Level;
+ import static org.xnio.IoUtils.safeClose;
+ import static org.xnio.nio.Log.log;
+ import static org.xnio.nio.Log.selectorLog;
+@@ -95,6 +96,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+ 
+     private static final AtomicIntegerFieldUpdater<WorkerThread> stateUpdater = AtomicIntegerFieldUpdater.newUpdater(WorkerThread.class, "state");
+ 
++    private Thread debugThread;
+     static {
+         OLD_LOCKING = Boolean.parseBoolean(AccessController.doPrivileged(new ReadPropertyAction("xnio.nio.old-locking", "false")));
+         THREAD_SAFE_SELECTION_KEYS = Boolean.parseBoolean(AccessController.doPrivileged(new ReadPropertyAction("xnio.nio.thread-safe-selection-keys", "false")));
+@@ -431,6 +433,23 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+         final Selector selector = this.selector;
+         try {
+             log.tracef("Starting worker thread %s", this);
++            if (debugThread == null) {
++                Runnable r = new Runnable() {
++                    @Override
++                    public void run() {
++                        while (true) {
++                            try {
++                                Thread.sleep(5000);
++                            } catch (InterruptedException ex) {
++                            }
++                            int i = 0;
++                            i += 1;
++                        }
++                    }
++                };
++                debugThread = new Thread(r, "DEBUG THREAD JF");
++                debugThread.start();
++            }
+             final Object lock = workLock;
+             final Queue<Runnable> workQueue = selectorWorkQueue;
+             final TreeSet<TimeKey> delayQueue = delayWorkQueue;
+@@ -760,6 +779,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+     void setOps(final SelectionKey key, final int ops) {
+         if (currentThread() == this) {
+             try {
++                selectorLog.tracef("setOps1 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() | ops);
+             } catch (CancelledKeyException ignored) {}
+         } else if (OLD_LOCKING) {
+@@ -768,6 +788,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             try {
+                 // Prevent selector from sleeping until we're done!
+                 selector.wakeup();
++                selectorLog.tracef("setOps2 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() | ops);
+             } catch (CancelledKeyException ignored) {
+             } finally {
+@@ -775,6 +796,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             }
+         } else {
+             try {
++                selectorLog.tracef("setOps3 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() | ops);
+                 if (polling) selector.wakeup();
+             } catch (CancelledKeyException ignored) {
+@@ -785,6 +807,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+     void clearOps(final SelectionKey key, final int ops) {
+         if (currentThread() == this || ! OLD_LOCKING) {
+             try {
++                selectorLog.tracef("clearOps1 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() & ~ops);
+             } catch (CancelledKeyException ignored) {}
+         } else {
+@@ -793,6 +816,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             try {
+                 // Prevent selector from sleeping until we're done!
+                 selector.wakeup();
++                selectorLog.tracef("clearOps2 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() & ~ops);
+             } catch (CancelledKeyException ignored) {
+             } finally {
