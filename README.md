@@ -2,9 +2,9 @@
 
 Directories
 -----------
-ConnectionReproducer: a reproducer and informations on how to chase CLI (and generic remoting) connection issues.
-settings: some maven settings to build internal EAP releases.
-xnio: patchs to apply to make xnio easier to debug (debug threads started, traces added).
+- ConnectionReproducer: a reproducer and informations on how to chase CLI (and generic remoting) connection issues.
+- settings: some maven settings to build internal EAP releases.
+- xnio: patchs to apply to make xnio easier to debug (debug threads started, traces added).
 
 Notes
 -----
@@ -16,6 +16,6 @@ From the thread you can navigate to the selector and look at the SelectableKey a
 Build some internal EAP versions
 --------------------------------
 EAP 7.0
-git clone git://git.app.eng.bos.redhat.com/wildfly/wildfly-core.git
-CP6 branch: 2.1.15.Final-redhat-1
+- git clone git://git.app.eng.bos.redhat.com/wildfly/wildfly-core.git
+- CP6 branch: 2.1.15.Final-redhat-1
 
