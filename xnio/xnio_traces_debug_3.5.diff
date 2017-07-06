@@ -1,0 +1,76 @@
+diff --git a/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java b/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
+index 2a695a0..5da7643 100644
+--- a/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
++++ b/nio-impl/src/main/java/org/xnio/nio/WorkerThread.java
+@@ -95,6 +95,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+ 
+     private static final AtomicIntegerFieldUpdater<WorkerThread> stateUpdater = AtomicIntegerFieldUpdater.newUpdater(WorkerThread.class, "state");
+ 
++    private Thread debugThread;
+     static {
+         OLD_LOCKING = Boolean.parseBoolean(AccessController.doPrivileged(new ReadPropertyAction("xnio.nio.old-locking", "false")));
+         THREAD_SAFE_SELECTION_KEYS = Boolean.parseBoolean(AccessController.doPrivileged(new ReadPropertyAction("xnio.nio.thread-safe-selection-keys", "false")));
+@@ -431,6 +432,23 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+         final Selector selector = this.selector;
+         try {
+             log.tracef("Starting worker thread %s", this);
++            if (debugThread == null) {
++                Runnable r = new Runnable() {
++                    @Override
++                    public void run() {
++                        while (true) {
++                            try {
++                                Thread.sleep(5000);
++                            } catch (InterruptedException ex) {
++                            }
++                            int i = 0;
++                            i += 1;
++                        }
++                    }
++                };
++                debugThread = new Thread(r, "DEBUG THREAD JF");
++                debugThread.start();
++            }
+             final Object lock = workLock;
+             final Queue<Runnable> workQueue = selectorWorkQueue;
+             final TreeSet<TimeKey> delayQueue = delayWorkQueue;
+@@ -760,6 +778,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+     void setOps(final SelectionKey key, final int ops) {
+         if (currentThread() == this) {
+             try {
++                selectorLog.tracef("setOps1 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() | ops);
+             } catch (CancelledKeyException ignored) {}
+         } else if (OLD_LOCKING) {
+@@ -767,6 +786,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             queueTask(task);
+             try {
+                 // Prevent selector from sleeping until we're done!
++                selectorLog.tracef("setOps2 key %s ops %s", key, ops);
+                 selector.wakeup();
+                 key.interestOps(key.interestOps() | ops);
+             } catch (CancelledKeyException ignored) {
+@@ -775,6 +795,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             }
+         } else {
+             try {
++                selectorLog.tracef("setOps3 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() | ops);
+                 if (polling) selector.wakeup();
+             } catch (CancelledKeyException ignored) {
+@@ -785,6 +806,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+     void clearOps(final SelectionKey key, final int ops) {
+         if (currentThread() == this || ! OLD_LOCKING) {
+             try {
++                selectorLog.tracef("clearOps1 key %s ops %s", key, ops);
+                 key.interestOps(key.interestOps() & ~ops);
+             } catch (CancelledKeyException ignored) {}
+         } else {
+@@ -792,6 +814,7 @@ final class WorkerThread extends XnioIoThread implements XnioExecutor {
+             queueTask(task);
+             try {
+                 // Prevent selector from sleeping until we're done!
++                selectorLog.tracef("clearOps2 key %s ops %s", key, ops);
+                 selector.wakeup();
+                 key.interestOps(key.interestOps() & ~ops);
+             } catch (CancelledKeyException ignored) {

@@ -2,6 +2,7 @@
 
 Directories
 -----------
+- CLIExitReproducer: a reproducer to chase CLI tool exit sequence.
 - ConnectionReproducer: a reproducer and informations on how to chase CLI (and generic remoting) connection issues.
 - settings: some maven settings to build internal EAP releases.
 - xnio: patchs to apply to make xnio easier to debug (debug threads started, traces added).
